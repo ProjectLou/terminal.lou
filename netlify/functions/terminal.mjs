@@ -1,11 +1,14 @@
 import { getStore } from "@netlify/blobs";
 import crypto from "node:crypto";
 
-const KEYWORDS = [
-  "soi","soi meme","soimeme","moi","moi meme","moimeme",
-  "interieur","l interieur","dedans","au dedans","en dedans",
-  "se voir","se regarder","se retourner vers soi","l intime","intime",
-  "l ame","ame","son ame","le dedans","soi-meme","moi-meme"
+const EXACT = [
+  "soi","soi meme","soimeme","moi","moi meme","moimeme","soi-meme","moi-meme",
+  "le dedans","dedans","au dedans","en dedans","l interieur","interieur",
+  "l intime","intime","l ame","ame","son ame","mon ame"
+];
+const CONTAINS = [
+  "se voir soi","se regarder soi","se retourner vers soi",
+  "regarder en soi","voir en soi","au fond de soi","en soi meme","en moi meme"
 ];
 
 const PREFIX = ["MYRTILLE","COLOMBE","SPIRALE","NORD","MERIDIEN","AUSTRALE","CAGE","ORIENT"];
@@ -17,7 +20,19 @@ const norm = (s="") =>
 function isCorrect(answer){
   const n = norm(answer);
   if(!n) return false;
-  return KEYWORDS.some(k => n.includes(norm(k)));
+  if(EXACT.includes(n)) return true;
+  if(CONTAINS.some(k => n.includes(norm(k)))) return true;
+  const words = n.split(" ");
+  if(words.length <= 3){
+    const last = words[words.length-1];
+    if(["soi","moi","dedans","interieur","intime","ame"].includes(last)){
+      const BAD = ["dis","dit","dites","donne","montre","explique","aide","parle","raconte","laisse","ecoute","regarde"];
+      const prev = words[words.length-2] || "";
+      if(BAD.includes(prev)) return false;
+      return true;
+    }
+  }
+  return false;
 }
 
 function makeKey(){
