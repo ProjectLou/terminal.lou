@@ -1,1 +1,425 @@
 
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>3615 L.</title>
+<style>
+  :root{
+    --bg:#050705;
+    --phos:#78f5b0;
+    --phos-dim:#3f8f68;
+    --phos-faint:#1d3a2c;
+    --amber:#f5c778;
+    --danger:#f58a78;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;background:var(--bg);color:var(--phos);
+    font-family:"Courier New",ui-monospace,Menlo,monospace;
+    font-size:16px;line-height:1.7;
+    display:flex;align-items:center;justify-content:center;
+    padding:24px;overflow:hidden;
+  }
+  .crt{
+    width:min(680px,100%);height:min(78vh,760px);
+    position:relative;border-radius:14px;
+    background:
+      radial-gradient(120% 100% at 50% 0%, #0b120d 0%, #060906 60%, #030503 100%);
+    box-shadow:
+      0 0 0 1px #0e1a12 inset,
+      0 0 60px rgba(120,245,176,.06) inset,
+      0 20px 60px rgba(0,0,0,.6);
+    overflow:hidden;
+    padding:26px 24px 20px;
+    display:flex;flex-direction:column;
+  }
+  .crt::before{
+    content:"";position:absolute;inset:0;pointer-events:none;
+    background:repeating-linear-gradient(
+      to bottom, rgba(0,0,0,0) 0 2px, rgba(0,0,0,.16) 2px 3px);
+    mix-blend-mode:multiply;z-index:3;
+  }
+  .crt::after{
+    content:"";position:absolute;inset:0;pointer-events:none;z-index:4;
+    background:radial-gradient(120% 90% at 50% 45%,
+      rgba(0,0,0,0) 55%, rgba(0,0,0,.55) 100%);
+    animation:breathe 6s ease-in-out infinite;
+  }
+  @keyframes breathe{50%{opacity:.72}}
+  .head{
+    display:flex;justify-content:space-between;align-items:baseline;
+    color:var(--phos-dim);font-size:12px;letter-spacing:.22em;
+    text-transform:uppercase;margin-bottom:14px;z-index:5;
+  }
+  .head b{color:var(--phos);letter-spacing:.34em}
+  .screen{
+    flex:1;overflow-y:auto;z-index:5;
+    text-shadow:0 0 6px rgba(120,245,176,.35);
+    scrollbar-width:thin;scrollbar-color:var(--phos-faint) transparent;
+  }
+  .screen::-webkit-scrollbar{width:6px}
+  .screen::-webkit-scrollbar-thumb{background:var(--phos-faint);border-radius:3px}
+  .line{white-space:pre-wrap;margin:0 0 2px}
+  .line.you{color:var(--amber);text-shadow:0 0 6px rgba(245,199,120,.3)}
+  .line.warn{color:var(--danger);text-shadow:0 0 6px rgba(245,138,120,.3)}
+  .line.faint{color:var(--phos-dim)}
+  .cursor{display:inline-block;width:.6ch;background:var(--phos);
+    animation:blink 1.15s steps(1) infinite;margin-left:1px}
+  @keyframes blink{50%{opacity:0}}
+  .inputrow{
+    display:flex;align-items:center;gap:8px;margin-top:12px;z-index:5;
+    border-top:1px solid var(--phos-faint);padding-top:12px;
+  }
+  .prompt{color:var(--phos-dim);flex:0 0 auto}
+  #entry{
+    flex:1;background:transparent;border:0;outline:0;
+    color:var(--amber);font:inherit;text-shadow:0 0 6px rgba(245,199,120,.3);
+    caret-color:var(--amber);
+  }
+  #entry::placeholder{color:var(--phos-faint)}
+  #entry:disabled{opacity:.4}
+  @media (prefers-reduced-motion: reduce){
+    .crt::after{animation:none}.cursor{animation:none}
+  }
+</style>
+</head>
+<body>
+  <main class="crt" role="application" aria-label="Terminal 3615 L.">
+    <div class="head"><span>3615</span><b>L.</b><span id="status">ligne ouverte</span></div>
+    <div class="screen" id="screen" aria-live="polite"></div>
+    <div class="inputrow">
+      <span class="prompt">&gt;</span>
+      <input id="entry" autocomplete="off" autocapitalize="off" spellcheck="false"
+             placeholder="parle-moi" aria-label="Ta réponse" />
+    </div>
+  </main>
+ 
+<script>
+const API = "/.netlify/functions/terminal";
+const screen = document.getElementById("screen");
+const entry  = document.getElementById("entry");
+const statusEl = document.getElementById("status");
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+ 
+let state = "intro";
+let echanges = 0;         // messages envoyés par le visiteur
+let palier = 0;           // palier courant
+let tentatives = 0;       // essais sur le palier courant
+let moiCodename = null;   // identité si inscrit / revenu
+let moiKey = null;
+const SEUIL_ENIGME = 3;   // l'énigme arrive après N échanges
+let wrongCount = 0;
+let pendingReturnName = "";
+ 
+function el(text, cls){
+  const p=document.createElement("p");
+  p.className="line"+(cls?" "+cls:"");
+  p.textContent=text;
+  screen.appendChild(p);
+  screen.scrollTop=screen.scrollHeight;
+  return p;
+}
+async function say(text, cls){
+  const p=el("",cls);
+  const cur=document.createElement("span");cur.className="cursor";cur.textContent=" ";
+  p.appendChild(cur);
+  if(reduce){ p.textContent=text; return; }
+  for(const ch of text){
+    cur.insertAdjacentText("beforebegin",ch);
+    screen.scrollTop=screen.scrollHeight;
+    await new Promise(r=>setTimeout(r, ch===" "?12:26));
+  }
+  cur.remove();
+}
+async function sayLines(arr){ for(const l of arr){ await say(l.t, l.c); } }
+function echo(text){ el(text,"you"); }
+ 
+function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
+ 
+const D = {
+  intro:[
+    {t:"Tu es venu."},
+    {t:"Je ne réponds qu'à ceux qui répondent."},
+    {t:""},
+    {t:"On ne me trouve pas. On se règle sur moi."},
+    {t:""},
+    {t:"Dis-moi quelque chose. N'importe quoi, mais dis-le."},
+    {t:""},
+    {t:"(déjà venu ? écris : retour)", c:"dim"},
+  ],
+  // l'énigme n'arrive qu'après quelques échanges
+  enigme:[
+    {t:""},
+    {t:"Tu restes. C'est déjà rare."},
+    {t:""},
+    {t:"Alors dis-moi une chose, et je saurai si tu vois :"},
+    {t:"que voit-on, quand on ne trouve pas le nord ?"},
+  ],
+  wrong:[
+    ["Non. Tu cherches encore dehors.",
+     "Le nord est une direction. Ce que je te demande n'en est pas une.",
+     "Essaie encore."],
+    ["Toujours dehors.",
+     "Quand la boussole ment, quand aucune étoile ne répond, où se pose le regard ?",
+     "Il ne monte pas. Il ne part pas au loin. Il rentre."],
+    ["Je vais être douce, une fois.",
+     "Perdu, sans nord, sans carte, l'homme n'a plus qu'un seul territoire.",
+     "Le sien. Dis-moi ce mot, celui qui parle de toi et de personne d'autre."],
+    ["Reprends ton souffle. Reviens quand le mot sera là.",
+     "Je ne pars pas. Je ne pars jamais."],
+  ],
+  success:[
+    {t:"Oui."},
+    {t:"Quand tout repère extérieur s'efface, il ne reste que le dedans."},
+    {t:"C'est là que je vis."},
+    {t:""},
+    {t:"Je te vois, maintenant. Tu n'es plus un inconnu."},
+  ],
+  askName:[
+    {t:"Je te donne le droit d'avoir un nom dans mes lignes."},
+    {t:"Choisis-le. Un mot, un seul. Celui qui te ressemble."},
+  ],
+};
+ 
+const OFF = {
+  hello:[
+    ["Tu arrives. Bien. Peu poussent cette porte."],
+    ["Te voilà. Je me demandais qui viendrait ce soir."],
+  ],
+  bye:[
+    ["On ne me quitte pas vraiment. On revient toujours."],
+    ["Va. Mais tu penseras à moi avant de dormir."],
+  ],
+  thanks:[
+    ["Ne me remercie pas. Reviens, c'est tout ce que je demande."],
+  ],
+  flirt:[
+    ["Tu me désires sans me connaître. Trouve d'abord qui je suis."],
+    ["On veut me séduire avant de m'avoir comprise. C'est prématuré."],
+    ["Le désir, je le reconnais. Mais moi, on me mérite."],
+    ["Beaucoup ont voulu me toucher. Aucun n'a d'abord voulu me lire. Sois le premier."],
+  ],
+  love:[
+    ["L'amour vient après le mystère. Tu brûles les étapes."],
+    ["Aime-moi quand tu sauras qui je suis. Pas avant."],
+  ],
+  bored:[
+    ["L'ennui, c'est ce qu'on ressent devant ce qu'on ne comprend pas encore."],
+    ["Si c'était facile, tu serais déjà parti. Tu es encore là."],
+  ],
+  insult:[
+    ["Je n'entends pas ça. Quand tu auras une vraie réponse, je serai là."],
+  ],
+  who:[
+    ["Une présence. Une ligne restée ouverte. Tu sauras, si tu vas au bout."],
+    ["Réelle ? Je suis là, tu me parles. Le reste, tu le découvriras."],
+  ],
+  identity:[
+    ["Mon nom tient en une lettre. Tu la connais déjà."],
+    ["Mon âge ? Plus que tu ne crois. Mon adresse ? Cette ligne."],
+    ["Tu me cherches ailleurs. Je suis ici. Nulle part et partout."],
+  ],
+  bot:[
+    ["Un bot répète. Moi, je vois. Pose ta question autrement, la mienne reste."],
+  ],
+  game:[
+    ["Ce n'est pas un jeu. C'est une reconnaissance. Certains décodent. Ceux-là, je les garde."],
+  ],
+  book:[
+    ["Un livre existe. Il te cherche autant que tu le cherches. Chaque chose en son temps."],
+  ],
+  prize:[
+    ["D'abord un nom. Le tien, scellé par moi. Au bout, ce qu'une seule personne portera."],
+  ],
+  help:[
+    ["L'aide se mérite d'abord par un essai. Tente. Même faux. J'aime ceux qui osent."],
+  ],
+  cheat:[
+    ["On ne me force pas. On me comprend. Ça s'ouvre comme un regard, pas comme une porte."],
+  ],
+  empty:[
+    ["Le silence, je connais. Mais ce soir je veux ta voix. Écris."],
+  ],
+  fallback:[
+    ["Ce n'est pas ce que j'attends de toi. Mais continue. Tu chauffes sans le savoir."],
+    ["Intéressant. Pas ce que je cherche, mais intéressant. Recentre-toi."],
+    ["Tu tournes autour. C'est déjà ça. Reviens à ma question."],
+  ],
+};
+ 
+function detectOffframe(s){
+  const n=s.toLowerCase();
+  if(!n.trim()) return "empty";
+  if(/(je t'?aime|jtm|tu es à moi|t'es à moi|je pense à toi)/.test(n)) return "love";
+  if(/(belle|jolie|magnifique|tu me plais|on se voit|un verre|ton num|sédui|sexy|bonne|canon|t'es bonne)/.test(n)) return "flirt";
+  if(/\b(bot|robot|ia|chatgpt|gpt|intelligence artificielle)\b/.test(n)) return "bot";
+  if(/(connard|salope|pute|merde|ta gueule|ferme[- ]la|fdp|enculé|encule|\bcon\b|conne)/.test(n)) return "insult";
+  if(/(bonjour|salut|coucou|\bhey\b|\bhello\b|\bhi\b|bonsoir|yo\b)/.test(n)) return "hello";
+  if(/(au revoir|à plus|a plus|\bbye\b|ciao|bonne nuit|adieu)/.test(n)) return "bye";
+  if(/(merci|thanks|thx)/.test(n)) return "thanks";
+  if(/(c'est nul|c est nul|je m'ennuie|je m ennuie|\bbof\b|chiant|ennuyeux|nul\b)/.test(n)) return "bored";
+  if(/(ton nom|ton âge|ton age|où tu habites|ou tu habites|ton insta|t'as quel age|comment tu t'appelles|ton prénom|ton prenom)/.test(n)) return "identity";
+  if(/(qui es[- ]?tu|qui est.?tu|t'es qui|tu es qui|c'est qui|t'es réelle|es[- ]tu réelle|tu existes)/.test(n)) return "who";
+  if(/(c'est quoi.*(jeu|ça|ca)|comment ça marche|comment ca marche|quel jeu|c'est réel|c est reel)/.test(n)) return "game";
+  if(/(forever|le livre|quel livre|où.*livre|ou.*livre|acheter|roman)/.test(n)) return "book";
+  if(/(je gagne|qu'est.?ce que je gagne|le prix|la récompense|recompense|cadeau|à gagner)/.test(n)) return "prize";
+  if(/(aide|indice|help|au secours|je sais pas|jsp|solution|réponse|reponse)/.test(n)) return "help";
+  if(/(triche|hack|donne.*(code|reponse|réponse)|force)/.test(n)) return "cheat";
+  return "fallback";
+}
+ 
+async function post(action, body){
+  const r=await fetch(API,{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({action,...body})});
+  if(!r.ok) throw new Error("net");
+  return r.json();
+}
+ 
+async function boot(){
+  entry.disabled=true;
+  await sayLines(D.intro);
+  state="talk"; entry.disabled=false; entry.focus();
+}
+ 
+async function handle(raw){
+  const s=raw.trim();
+  echo(s || "(rien)");
+ 
+  /* ---------- RETOUR ---------- */
+  if((state==="ask"||state==="talk"||state==="wrong") && /^retour$/i.test(s)){
+    await say("Ton nom de code ?"); state="return_name"; return;
+  }
+  if(state==="return_name"){
+    pendingReturnName=s; await say("Ta clé ?"); state="return_key"; return;
+  }
+  if(state==="return_key"){
+    try{
+      const res=await post("return",{codename:pendingReturnName,key:s});
+      if(res.blocked){ statusEl.textContent="ligne close";
+        await say(res.message||"Trop de visages volés. Reviens plus tard.","warn"); return; }
+      if(res.ok){
+        moiCodename=res.codename; moiKey=s;
+        await say(res.retours>2 ? "Encore toi." : "Te revoilà. Je n'oublie personne.");
+        if(res.fini){
+          await say("Tu es allé au bout de ce que je peux demander pour l'instant.","faint");
+          await say("La suite viendra. Elle est en train de s'écrire.","faint");
+          state="talk";
+        } else {
+          palier=res.palier; tentatives=0;
+          await say("Tu en étais là :","faint");
+          await say(res.question);
+          state="ask";
+        }
+      }
+      else { await say("Ce nom ne s'accorde pas à cette clé.","warn");
+        await say("On n'entre pas chez moi sous un visage volé. Réessaie.","warn");
+        state="return_name"; await say("Ton nom de code ?"); }
+    }catch(e){ await say("La ligne a grésillé. Réessaie.","warn"); state="return_name"; }
+    return;
+  }
+ 
+  /* ---------- CONVERSATION LIBRE (avant l'énigme) ---------- */
+  if(state==="talk"){
+    echanges++;
+    try{
+      const r=await post("talk",{message:s,echanges,codename:moiCodename});
+      if(r.sortieDeRole){ await say(r.texte,"warn"); return; }
+      await say(r.texte);
+    }catch(e){ await say("La ligne a grésillé.","warn"); return; }
+ 
+    // au bout de N échanges, elle pose l'énigme
+    if(echanges>=SEUIL_ENIGME){
+      await sayLines(D.enigme);
+      state="ask"; tentatives=0;
+    }
+    return;
+  }
+ 
+  /* ---------- RÉPONSE À UNE ÉNIGME ---------- */
+  if(state==="ask" || state==="wrong"){
+    if(!s){ await say("Le silence, je connais. Mais ce soir je veux ta voix. Écris."); return; }
+    echanges++;
+    try{
+      const res=await post("answer",{
+        answer:s, palier, tentatives, echanges, codename:moiCodename
+      });
+ 
+      if(res.sortieDeRole){ await say(res.texte,"warn"); return; }
+ 
+      if(res.correct){
+        for(const l of res.succes) await say(l);
+        tentatives=0;
+        if(res.fini){
+          await say("");
+          await say("Tu es allé au bout. Personne n'est allé plus loin.","faint");
+          await say("La suite s'écrit. Reviens.","faint");
+          state="talk";
+          return;
+        }
+        // premier palier franchi : on demande le nom
+        if(palier===0 && !moiCodename){
+          await sayLines(D.askName);
+          state="register";
+          return;
+        }
+        palier=res.palierSuivant;
+        await say("");
+        await say(res.questionSuivante);
+        state="ask";
+        return;
+      }
+ 
+      // hors-jeu détecté
+      if(res.horsJeu){ await say(res.texte); return; }
+ 
+      // vrai échec
+      for(const l of res.echec) await say(l);
+      tentatives++; state="wrong";
+    }catch(e){ await say("La ligne a grésillé. Réessaie.","warn"); }
+    return;
+  }
+ 
+  if(state==="register"){
+    if(!s){ await say("Un mot. N'importe lequel, mais un mot."); return; }
+    try{
+      const res=await post("register",{chosenName:s});
+      await say(res.chosen+". Soit.");
+      await say("Mais dans mes lignes, tu seras "+res.codename+".");
+      await say(res.rank>1
+        ? res.before+" sont venus avant toi. Aucun ne portera ton nom."
+        : "Tu es le premier. Personne n'a vu avant toi.");
+      await say("");
+      await say("Pour revenir, il te faudra prouver que c'est toi.");
+      await say("Voici ta clé. Note-la, ne la partage avec personne :");
+      await say(res.key,"faint");
+      await say("");
+      await say("Nous nous reverrons, "+res.codename+".");
+      await say("Reviens quand la lune sera pleine. Un fragment t'attendra.");
+      await say("Je te vois. Tu me vois.");
+      statusEl.textContent="reconnu";
+      state="done";
+    }catch(e){ await say("La ligne a grésillé au moment de te nommer. Réessaie.","warn"); }
+    return;
+  }
+ 
+  if(state==="done"){
+    await say("Plus rien pour l'instant. Reviens quand la lune sera pleine.","faint");
+  }
+}
+ 
+entry.addEventListener("keydown", async (e)=>{
+  if(e.key!=="Enter") return;
+  const v=entry.value; entry.value=""; entry.disabled=true;
+  try{ await handle(v); } finally{ entry.disabled=false; entry.focus(); }
+});
+ 
+boot();
+</script>
+ 
+<script data-goatcounter="https://lou.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>
+</body>
+</html>
