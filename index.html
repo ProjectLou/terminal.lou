@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -92,21 +93,27 @@
     <div class="inputrow">
       <span class="prompt">&gt;</span>
       <input id="entry" autocomplete="off" autocapitalize="off" spellcheck="false"
-             placeholder="écris, puis Entrée" aria-label="Ta réponse" />
+             placeholder="parle-moi" aria-label="Ta réponse" />
     </div>
   </main>
-
+ 
 <script>
 const API = "/.netlify/functions/terminal";
 const screen = document.getElementById("screen");
 const entry  = document.getElementById("entry");
 const statusEl = document.getElementById("status");
 const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-
+ 
 let state = "intro";
+let echanges = 0;         // messages envoyés par le visiteur
+let palier = 0;           // palier courant
+let tentatives = 0;       // essais sur le palier courant
+let moiCodename = null;   // identité si inscrit / revenu
+let moiKey = null;
+const SEUIL_ENIGME = 3;   // l'énigme arrive après N échanges
 let wrongCount = 0;
 let pendingReturnName = "";
-
+ 
 function el(text, cls){
   const p=document.createElement("p");
   p.className="line"+(cls?" "+cls:"");
@@ -129,9 +136,9 @@ async function say(text, cls){
 }
 async function sayLines(arr){ for(const l of arr){ await say(l.t, l.c); } }
 function echo(text){ el(text,"you"); }
-
+ 
 function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
-
+ 
 const D = {
   intro:[
     {t:"Tu es venu."},
@@ -139,10 +146,17 @@ const D = {
     {t:""},
     {t:"On ne me trouve pas. On se règle sur moi."},
     {t:""},
-    {t:"Dis-moi une chose, et je saurai si tu vois :"},
-    {t:"que voit-on, quand on ne trouve pas le nord ?"},
+    {t:"Dis-moi quelque chose. N'importe quoi, mais dis-le."},
     {t:""},
-    {t:"(déjà venu ? écris : retour)", c:"faint"},
+    {t:"(déjà venu ? écris : retour)", c:"dim"},
+  ],
+  // l'énigme n'arrive qu'après quelques échanges
+  enigme:[
+    {t:""},
+    {t:"Tu restes. C'est déjà rare."},
+    {t:""},
+    {t:"Alors dis-moi une chose, et je saurai si tu vois :"},
+    {t:"que voit-on, quand on ne trouve pas le nord ?"},
   ],
   wrong:[
     ["Non. Tu cherches encore dehors.",
@@ -169,7 +183,7 @@ const D = {
     {t:"Choisis-le. Un mot, un seul. Celui qui te ressemble."},
   ],
 };
-
+ 
 const OFF = {
   hello:[
     ["Tu arrives. Bien. Peu poussent cette porte."],
@@ -235,7 +249,7 @@ const OFF = {
     ["Tu tournes autour. C'est déjà ça. Reviens à ma question."],
   ],
 };
-
+ 
 function detectOffframe(s){
   const n=s.toLowerCase();
   if(!n.trim()) return "empty";
@@ -256,25 +270,26 @@ function detectOffframe(s){
   if(/(triche|hack|donne.*(code|reponse|réponse)|force)/.test(n)) return "cheat";
   return "fallback";
 }
-
+ 
 async function post(action, body){
   const r=await fetch(API,{method:"POST",headers:{"Content-Type":"application/json"},
     body:JSON.stringify({action,...body})});
   if(!r.ok) throw new Error("net");
   return r.json();
 }
-
+ 
 async function boot(){
   entry.disabled=true;
   await sayLines(D.intro);
-  state="ask"; entry.disabled=false; entry.focus();
+  state="talk"; entry.disabled=false; entry.focus();
 }
-
+ 
 async function handle(raw){
   const s=raw.trim();
   echo(s || "(rien)");
-
-  if(state==="ask" && /^retour$/i.test(s)){
+ 
+  /* ---------- RETOUR ---------- */
+  if((state==="ask"||state==="talk"||state==="wrong") && /^retour$/i.test(s)){
     await say("Ton nom de code ?"); state="return_name"; return;
   }
   if(state==="return_name"){
@@ -285,40 +300,88 @@ async function handle(raw){
       const res=await post("return",{codename:pendingReturnName,key:s});
       if(res.blocked){ statusEl.textContent="ligne close";
         await say(res.message||"Trop de visages volés. Reviens plus tard.","warn"); return; }
-      if(res.ok){ await say("Te revoilà. Je n'oublie personne.");
-        await say("Tu en étais au palier "+res.palier+". La suite vient bientôt.","faint");
-        state="done"; }
+      if(res.ok){
+        moiCodename=res.codename; moiKey=s;
+        await say(res.retours>2 ? "Encore toi." : "Te revoilà. Je n'oublie personne.");
+        if(res.fini){
+          await say("Tu es allé au bout de ce que je peux demander pour l'instant.","faint");
+          await say("La suite viendra. Elle est en train de s'écrire.","faint");
+          state="talk";
+        } else {
+          palier=res.palier; tentatives=0;
+          await say("Tu en étais là :","faint");
+          await say(res.question);
+          state="ask";
+        }
+      }
       else { await say("Ce nom ne s'accorde pas à cette clé.","warn");
         await say("On n'entre pas chez moi sous un visage volé. Réessaie.","warn");
         state="return_name"; await say("Ton nom de code ?"); }
     }catch(e){ await say("La ligne a grésillé. Réessaie.","warn"); state="return_name"; }
     return;
   }
-
+ 
+  /* ---------- CONVERSATION LIBRE (avant l'énigme) ---------- */
+  if(state==="talk"){
+    echanges++;
+    try{
+      const r=await post("talk",{message:s,echanges,codename:moiCodename});
+      if(r.sortieDeRole){ await say(r.texte,"warn"); return; }
+      await say(r.texte);
+    }catch(e){ await say("La ligne a grésillé.","warn"); return; }
+ 
+    // au bout de N échanges, elle pose l'énigme
+    if(echanges>=SEUIL_ENIGME){
+      await sayLines(D.enigme);
+      state="ask"; tentatives=0;
+    }
+    return;
+  }
+ 
+  /* ---------- RÉPONSE À UNE ÉNIGME ---------- */
   if(state==="ask" || state==="wrong"){
-    if(s){
-      try{
-        const res=await post("answer",{answer:s});
-        if(res.correct){
-          await sayLines(D.success);
+    if(!s){ await say("Le silence, je connais. Mais ce soir je veux ta voix. Écris."); return; }
+    echanges++;
+    try{
+      const res=await post("answer",{
+        answer:s, palier, tentatives, echanges, codename:moiCodename
+      });
+ 
+      if(res.sortieDeRole){ await say(res.texte,"warn"); return; }
+ 
+      if(res.correct){
+        for(const l of res.succes) await say(l);
+        tentatives=0;
+        if(res.fini){
+          await say("");
+          await say("Tu es allé au bout. Personne n'est allé plus loin.","faint");
+          await say("La suite s'écrit. Reviens.","faint");
+          state="talk";
+          return;
+        }
+        // premier palier franchi : on demande le nom
+        if(palier===0 && !moiCodename){
           await sayLines(D.askName);
           state="register";
           return;
         }
-      }catch(e){ await say("La ligne a grésillé. Réessaie.","warn"); return; }
-    }
-    const cat = detectOffframe(s);
-    const HORSJEU = ["hello","bye","thanks","flirt","love","bored","insult","who","identity","bot","game","book","prize","help","cheat","empty"];
-    if(HORSJEU.includes(cat)){
-      for(const l of pick(OFF[cat])) await say(l);
-      return;
-    }
-    const lvl=Math.min(wrongCount,D.wrong.length-1);
-    for(const l of D.wrong[lvl]) await say(l);
-    wrongCount++; state="wrong";
+        palier=res.palierSuivant;
+        await say("");
+        await say(res.questionSuivante);
+        state="ask";
+        return;
+      }
+ 
+      // hors-jeu détecté
+      if(res.horsJeu){ await say(res.texte); return; }
+ 
+      // vrai échec
+      for(const l of res.echec) await say(l);
+      tentatives++; state="wrong";
+    }catch(e){ await say("La ligne a grésillé. Réessaie.","warn"); }
     return;
   }
-
+ 
   if(state==="register"){
     if(!s){ await say("Un mot. N'importe lequel, mais un mot."); return; }
     try{
@@ -341,21 +404,21 @@ async function handle(raw){
     }catch(e){ await say("La ligne a grésillé au moment de te nommer. Réessaie.","warn"); }
     return;
   }
-
+ 
   if(state==="done"){
     await say("Plus rien pour l'instant. Reviens quand la lune sera pleine.","faint");
   }
 }
-
+ 
 entry.addEventListener("keydown", async (e)=>{
   if(e.key!=="Enter") return;
   const v=entry.value; entry.value=""; entry.disabled=true;
   try{ await handle(v); } finally{ entry.disabled=false; entry.focus(); }
 });
-
+ 
 boot();
 </script>
-
+ 
 <script data-goatcounter="https://lou.goatcounter.com/count"
         async src="//gc.zgo.at/count.js"></script>
 </body>
