@@ -83,6 +83,13 @@
   @media (prefers-reduced-motion: reduce){
     .crt::after{animation:none}.cursor{animation:none}
   }
+.urgent{
+    border:1px solid #d8c9a0; background:rgba(216,201,160,.06);
+    padding:14px 16px; margin:14px 0; border-radius:4px;
+    color:#f0e6cc; text-shadow:none; line-height:1.55;
+  }
+  .urgent p{ margin:0 0 6px; }
+  .urgent p:last-child{ margin-bottom:0; font-style:italic; opacity:.85; }
 </style>
 </head>
 <body>
@@ -134,6 +141,19 @@ async function say(text, cls){
   cur.remove();
 }
 async function sayLines(arr){ for(const l of arr){ await say(l.t, l.c); } }
+
+// Sortie de personnage : affichage immédiat, multi-lignes, visuellement distinct.
+function sayUrgent(text){
+  const box=document.createElement("div");
+  box.className="urgent";
+  for(const line of text.split("\n")){
+    const p=document.createElement("p");
+    p.textContent=line;
+    box.appendChild(p);
+  }
+  screen.appendChild(box);
+  screen.scrollTop=screen.scrollHeight;
+}
 function echo(text){ el(text,"you"); }
 
 function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
@@ -320,12 +340,36 @@ async function handle(raw){
     return;
   }
 
-  /* ---------- CONVERSATION LIBRE (avant l'énigme) ---------- */
+  /* ---------- CONVERSATION LIBRE ---------- */
   if(state==="talk"){
+    // le joueur redemande l'énigme
+    if(/^(question|enigme|énigme|la question|repose|rejouer)$/i.test(s)){
+      await say("");
+      await say(D.enigme[D.enigme.length-1].t);
+      state="ask"; tentatives=0;
+      return;
+    }
     echanges++;
+    // et s'il donne la bonne réponse spontanément ?
+    try{
+      const test=await post("answer",{answer:s,palier,tentatives:0,echanges,codename:moiCodename});
+      if(test.correct){
+        for(const l of test.succes) await say(l);
+        tentatives=0;
+        if(test.fini){
+          await say(""); await say("Tu es allé au bout. Personne n'est allé plus loin.","faint");
+          return;
+        }
+        if(palier===0 && !moiCodename){ await sayLines(D.askName); state="register"; return; }
+        palier=test.palierSuivant;
+        await say(""); await say(test.questionSuivante);
+        state="ask"; return;
+      }
+    }catch(e){}
+
     try{
       const r=await post("talk",{message:s,echanges,codename:moiCodename});
-      if(r.sortieDeRole){ await say(r.texte,"warn"); return; }
+      if(r.sortieDeRole){ sayUrgent(r.texte); return; }
       await say(r.texte);
     }catch(e){ await say("La ligne a grésillé.","warn"); return; }
 
@@ -346,7 +390,7 @@ async function handle(raw){
         answer:s, palier, tentatives, echanges, codename:moiCodename
       });
 
-      if(res.sortieDeRole){ await say(res.texte,"warn"); return; }
+      if(res.sortieDeRole){ sayUrgent(res.texte); return; }
 
       if(res.correct){
         for(const l of res.succes) await say(l);
@@ -376,7 +420,16 @@ async function handle(raw){
 
       // vrai échec
       for(const l of res.echec) await say(l);
-      tentatives++; state="wrong";
+      tentatives++;
+      // indices épuisés : on rouvre la conversation, l'énigme reste disponible
+      if(tentatives >= 4){
+        await say("");
+        await say("Parle-moi d'autre chose si tu veux. La question reste posée.","faint");
+        await say("(écris : question — pour que je te la repose)","faint");
+        state="talk";
+      } else {
+        state="wrong";
+      }
     }catch(e){ await say("La ligne a grésillé. Réessaie.","warn"); }
     return;
   }
